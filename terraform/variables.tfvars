@@ -1,0 +1,14 @@
+db_name = "amazonstudios"
+db_identifier = "amazonstudiosdb"
+db_class = "db.t3.medium"
+db_securitygroup = ["sg-0812e4960c43cdd5a"]
+db_subnetgroupname    = "test-ovaledgedb-dbsubnetgrp"
+db_username  = "admin"
+db_port    = 3306
+db_region  = "us-east-2"
+engine_version= "5.7.34"
+db_allocated_storage = 100
+db_backup_retention_period = 14
+oe_secret_managername = "amazonstudiosdatabasedetailsone"
+db_final_snapshot_identifier = "ovaledgerdssnp"
+engine="mysql"

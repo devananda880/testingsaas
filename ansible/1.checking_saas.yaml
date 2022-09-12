@@ -1,0 +1,260 @@
+---
+- name: Install OvalEdge Application
+  hosts: all
+  become: true
+  vars:
+    - username: "s1"
+    - password: "0valEdge!"
+  tasks:
+    - name: client name
+      debug:
+        msg: "{{ username }}"
+      register: secret_facts
+
+    - name: Update all Ubuntu packages
+      apt:
+        update_cache: yes
+        upgrade: "dist"
+      when: ansible_distribution == 'Ubuntu'
+    - name: Install required Ubuntu packages
+      apt:
+        name: "{{ packages }}"
+        state: present
+      vars:
+        packages:
+          - openjdk-8-jdk-headless
+          - mysql-client
+          - unzip
+          - zip
+    - name: Create a new regular user with sudo privileges
+      user:
+        name: "{{ username }}"
+        password: "{{ password | password_hash('sha512') }}"
+        state: present
+        create_home: true
+        shell: /bin/bash
+    - name: Add provision user to the sudoers
+      copy:
+        dest: "/etc/sudoers.d/{{ username }}"
+        content: "{{ username }}  ALL=(ALL)  NOPASSWD: ALL"
+    - name: add user to sudo group
+      shell: usermod -aG sudo {{ username }}
+      args:
+        executable: /bin/bash
+    - name: Allow SSH password authentication
+      lineinfile:
+        dest=/etc/ssh/sshd_config
+        regexp="^PasswordAuthentication"
+        line="PasswordAuthentication yes"
+        state=present
+      notify:
+        - restart sshd
+  handlers:
+  - name: restart sshd
+    service:
+      name=sshd
+      state=restarted
+
+- name: re Install OvalEdge Application
+  hosts: all
+  become: true
+  #become_method: true
+  become_user: s1
+  vars:
+    - client_name: "s1"
+  tasks:
+    - name: Download tomcat server package
+      get_url:
+       url: https://downloads.apache.org/tomcat/tomcat-9/v9.0.65/bin/apache-tomcat-9.0.65.tar.gz
+       dest: /home/{{ client_name }}
+    - name: Extract tomcat package
+      unarchive:
+       src: /home/{{ client_name }}/apache-tomcat-9.0.65.tar.gz
+       dest: /home/{{ client_name }}
+       remote_src: yes
+    - name: downloading jars
+      get_url:
+       url: https://ovaledge.s3.us-west-1.amazonaws.com/OvalEdge+QA+Documents/third_party_jars.zip
+       dest: /home/{{ client_name }}
+    - name: unzipping thirdparty jars
+      command: chdir=/home/{{ client_name }}/ {{ item }}
+      with_items:
+        - unzip third_party_jars.zip
+    - name: Get Ovaledge war
+      get_url:
+       url: https://jenkins-ovaledge-s3.s3.amazonaws.com/jenkins-6.0-s3/1231/ovaledge.war
+       dest: /home/{{ client_name }}/apache-tomcat-9.0.65/webapps
+    - name: Get Scripts
+      get_url:
+       url: https://zapovaledgereport1.s3.ap-south-1.amazonaws.com/deva/01.database.sql
+       dest : /home/{{ client_name }}
+    - name: creating nifi directory to install nifi-server
+      shell: mkdir /home/{{ client_name }}/nifi
+    - name: Get authorizations.xml file
+      get_url:
+        url: https://saas-oe.s3.ap-south-1.amazonaws.com/nifi/authorizations.xml
+        dest : /home/{{ client_name }}/nifi
+    - name: Get authorizers.xml file
+      get_url:
+        url: https://saas-oe.s3.ap-south-1.amazonaws.com/nifi/authorizers.xml
+        dest: /home/{{ client_name }}/nifi
+    - name: Get flow.xml.gz file
+      get_url:
+        url: https://saas-oe.s3.ap-south-1.amazonaws.com/nifi/flow.xml.gz
+        dest : /home/{{ client_name }}/nifi
+    - name: Get serverScript.sh file
+      get_url:
+        url: https://saas-oe.s3.ap-south-1.amazonaws.com/backup_files/serverScript.sh
+        dest: /home/{{ client_name }}/nifi
+    - name: changing serverScript.sh file
+      shell: |
+        sed -i 's/CLIENT_NAME/{{ client_name }}/g' /home/{{ client_name }}/nifi/serverScript.sh
+    - name: Get users.xml
+      get_url:
+        url: https://saas-oe.s3.ap-south-1.amazonaws.com/nifi/users.xml
+        dest: /home/{{ client_name }}/nifi
+    - name: Get generate_bridge_client_artifacts.sh
+      get_url:
+        url: https://saas-oe.s3.ap-south-1.amazonaws.com/backup_files/generate_bridge_client_artifacts.sh
+        dest: /home/{{ client_name }}/nifi
+    - name: changing generate_bridge_client_artifacts.sh file
+      shell: |
+        sed -i 's/CLIENT_NAME/{{ client_name }}/g' /home/{{ client_name }}/nifi/generate_bridge_client_artifacts.sh
+    - name: Get nifi-1.16.3.zip file
+      get_url:
+        url: https://saas-oe.s3.ap-south-1.amazonaws.com/nifi/nifi-1.16.3.zip
+        dest: /home/{{ client_name }}/nifi
+    - name: Get nifi-toolkit-1.16.3-bin.tar.gz file
+      get_url:
+        url: https://saas-oe.s3.ap-south-1.amazonaws.com/nifi/nifi-toolkit-1.16.3-bin.tar.gz
+        dest: /home/{{ client_name }}/nifi
+    - name: installing nifi-server
+      command: chdir=/home/{{ client_name }}/nifi/ {{ item }}
+      with_items:
+        - sudo apt-get install unzip -y
+        - unzip /home/{{ client_name }}/nifi/nifi-1.16.3.zip
+        - mkdir /home/{{ client_name }}/BridgeSoftware
+        - mkdir /home/{{ client_name }}/bridgetemp
+        - sudo chmod 777 /home/{{ client_name }}/bridgetemp
+        - sudo chmod 777 /home/{{ client_name }}/BridgeSoftware
+        - sudo chmod 777 /home/{{ client_name }}/nifi/generate_bridge_client_artifacts.sh
+        - tar -xvf /home/{{ client_name }}/nifi/nifi-toolkit-1.16.3-bin.tar.gz
+    - name: setting up nifi-server
+      shell: |
+        server_ip=$(curl https://ipinfo.io/ip)
+        sh /home/{{ client_name }}/nifi/serverScript.sh $server_ip BRIDGE1
+        nohup /home/{{ client_name }}/nifi/nifi-1.16.3/bin/nifi.sh start
+    - name: creating nifi directory to install nifi-server
+      shell: |
+        crontab -l | { cat; echo "* * * * * /home/{{ client_name }}/nifi/generate_bridge_client_artifacts.sh >> /home/{{ client_name }}/BridgeSoftware/crontab.log 2>&1"; } | crontab -
+        crontab -l | { cat; echo "* * * * * ( sleep 10; /home/{{ client_name }}/nifi/generate_bridge_client_artifacts.sh >> /home/{{ client_name }}/BridgeSoftware/crontab.log 2>&1)"; } | crontab -
+        crontab -l | { cat; echo "* * * * * ( sleep 20; /home/{{ client_name }}/nifi/generate_bridge_client_artifacts.sh >> /home/{{ client_name }}/BridgeSoftware/crontab.log 2>&1)"; } | crontab -
+        crontab -l | { cat; echo "* * * * * ( sleep 30; /home/{{ client_name }}/nifi/generate_bridge_client_artifacts.sh >> /home/{{ client_name }}/BridgeSoftware/crontab.log 2>&1)"; } | crontab -
+        crontab -l | { cat; echo "* * * * * ( sleep 40; /home/{{ client_name }}/nifi/generate_bridge_client_artifacts.sh >> /home/{{ client_name }}/BridgeSoftware/crontab.log 2>&1)"; } | crontab -
+        crontab -l | { cat; echo "* * * * * ( sleep 50; /home/{{ client_name }}/nifi/generate_bridge_client_artifacts.sh >> /home/{{ client_name }}/BridgeSoftware/crontab.log 2>&1)"; } | crontab -
+
+
+    - name: retreiving password
+      debug:
+        msg: >-
+          {{
+            lookup(
+              'amazon.aws.aws_secret',
+              'SECRET_MANAGER_NAME')
+          }}
+      register: secret_facts
+    - name: Run Scripts in RDS
+      shell: "mysql -h {{ secret_facts.msg.host }} -u {{ secret_facts.msg.username }} -p{{ secret_facts.msg.password }}  < /home/{{ client_name }}/01.database.sql >> /home/{{ client_name }}/testscript.log"
+
+    - name: Run Scripfor jar temp and base url
+      shell: |
+        mysql -h {{ secret_facts.msg.host }} -u {{ secret_facts.msg.username }} -p{{ secret_facts.msg.password }} ovaledgedb -e "UPDATE jobparm SET  jobparmvalue='/home/{{ client_name }}/third_party_jars' WHERE jobparmkey='ovaledge.jarpath';"
+        mysql -h {{ secret_facts.msg.host }} -u {{ secret_facts.msg.username }} -p{{ secret_facts.msg.password }} ovaledgedb -e "UPDATE jobparm SET  jobparmvalue='/tmp/' WHERE jobparmkey='ovaledge.temppath';"
+        mysql -h {{ secret_facts.msg.host }} -u {{ secret_facts.msg.username }} -p{{ secret_facts.msg.password }} ovaledgedb -e "UPDATE jobparm SET  jobparmvalue='BASE_URL_AUTO' WHERE jobparmkey='ovaledge.base.url';"
+
+    - name: Create ext-properties
+      file:
+        path: /home/{{ client_name }}/ext-prop
+        state: directory
+    - name: Get oasis.prop file
+      get_url:
+        url: https://zapovaledgereport1.s3.ap-south-1.amazonaws.com/deva/oasis.properties
+        dest: /home/{{ client_name }}/ext-prop
+    - name: installing elasticsearch
+      shell: |
+        sudo apt-get install apt-transport-https -y
+        wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+        sudo echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
+        sudo apt-get update
+        sudo apt-get install elasticsearch=7.17.4 -y
+        sudo systemctl daemon-reload
+        sudo systemctl start elasticsearch.service
+        sudo systemctl enable elasticsearch.service
+        sudo echo "cluster.name: ovaledge
+        network.host: 0.0.0.0
+        transport.host: localhost
+        transport.tcp.port: 9300
+        http.port: 9200
+        xpack.security.enabled: true" >> /etc/elasticsearch/elasticsearch.yml
+        sudo echo "-Xms1g
+        -Xmx2g" >> /etc/elasticsearch/jvm.options
+        sudo systemctl restart elasticsearch.service
+        sudo echo "y" | /usr/share/elasticsearch/bin/elasticsearch-setup-passwords auto > /usr/share/elasticsearch/Elastic_pass.txt
+    - name: downloading python script to get elasticsearch password
+      get_url:
+        url: https://saas-oe.s3.ap-south-1.amazonaws.com/elk/elastic_pass.py
+        dest: /usr/local
+    - name: running the python script to get elasticsearch password
+      shell: |
+        sed -i 's/Client_Name/{{ client_name }}/g' /usr/local/elastic_pass.py
+        sudo chmod +x /usr/local/elastic_pass.py
+        python3 /usr/local/elastic_pass.py
+      #remote_src: yes
+    - name: changing oasis.properties file
+      shell: |
+        sed -i 's/RDS_oa_endpoint/{{ secret_facts.msg.host }}/g' /home/{{ client_name }}/ext-prop/oasis.properties
+        sed -i 's/RDS_oa_username/{{ secret_facts.msg.username }}/g' /home/{{ client_name }}/ext-prop/oasis.properties
+        sed -i 's/RDS_oa_password/{{ secret_facts.msg.password }}/g' /home/{{ client_name }}/ext-prop/oasis.properties
+    - name: Get stenv.sh file
+      get_url:
+        url: https://cloudera-files.s3.us-east-2.amazonaws.com/test/setenv.sh
+        dest: /home/{{ client_name }}/apache-tomcat-9.0.65/bin
+    - name: Get oe-filescanner.jar
+      get_url:
+        url: https://jenkins-ovaledge-s3.s3.amazonaws.com/FileScanner/19/oe-filescanner.jar
+        dest: /home/{{ client_name }}
+    - name: Get application.properties
+      get_url:
+        url: https://jenkins-ovaledge-s3.s3.amazonaws.com/FileScanner/19/application.properties
+        dest: /home/{{ client_name }}
+    - name: Get helpme.txt
+      get_url:
+        url: https://jenkins-ovaledge-s3.s3.amazonaws.com/FileScanner/19/helpme.txt
+        dest: /home/{{ client_name }}
+    - name: installing clamav
+      command: chdir=/home/{{ client_name }}/ {{ item }}
+      with_items:
+        - sudo apt-get install clamav clamav-daemon -y
+        - sudo systemctl stop clamav-freshclam
+        - sudo freshclam
+        - sudo echo "TCPSocket 3310
+          TCPAddr 127.0.0.1" >> /etc/clamav/clamd.conf
+        - mkdir /etc/systemd/system/clamav-daemon.socket.d
+        - sudo echo "ListenStream=127.0.0.1:3310" >> /etc/systemd/system/clamav-daemon.socket.d/extend.conf
+        - sudo systemctl start clamav-freshclam
+        - sudo systemctl status clamav-freshclam
+        - sudo systemctl enable clamav-freshclam
+        - sudo systemctl start clamav-daemon
+        - sudo systemctl enable clamav-daemon
+        - touch /home/{{ client_name }}/nohup.out
+    - name: Start tomcat
+      shell: nohup /home/{{ client_name }}/apache-tomcat-9.0.65/bin/startup.sh
+    - pause:
+        minutes: 3
+    - name: Print TOmcat logs
+      shell:
+        cat /home/{{ client_name }}/apache-tomcat-9.0.65/logs/catalina.out
+    - name: running jar file for clam av
+      shell: nohup java -Dspring.config.location=application.properties -Droot.scan.dir=/home/{{ client_name }}/apache-tomcat-9.0.65/temp -jar oe-filescanner.jar >> /home/{{ client_name }}/nohup.out 2>&1 &
+
+
